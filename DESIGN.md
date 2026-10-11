@@ -106,6 +106,8 @@ satisfiesAdditionalQuorumConstraints(L, ..., joinVotes):
         return true                                  # full candidates: unchanged behaviour
     for each voter N in joinVotes.nodes():
         if N is full:
+            if localAcceptedTerm == 0:                   # bootstrap: nothing ever published by a leader
+                return true
             J = the join in joinVotes.getJoins() whose source is N (may be absent)
             if J is absent:                          # call site 3: no join information
                 return true
@@ -117,6 +119,19 @@ satisfiesAdditionalQuorumConstraints(L, ..., joinVotes):
 In words: **a voting-only node may win an election only if at least one full
 cluster-manager node that voted for it holds a strictly older accepted state.** The
 only reason such an election is allowed is to push that newer state to full nodes (I5).
+
+**Bootstrap exception** (added during implementation, found by the coordination
+tests). A node that has never accepted a state published by a leader has
+`localAcceptedTerm == 0`, so it holds at most the bootstrap configuration. If the
+initial configuration contains only voting-only nodes, those are the only bootstrapped
+nodes. Un-bootstrapped full nodes cannot be candidates, and their pre-vote/join
+reports `(0, 0)`, the same as the voting-only node's, so the strict rule above would
+never let anyone win and the cluster would never form. In that state a single full
+voter is therefore enough. The voting-only node wins once, publishes the
+configuration (accepted at a term ≥ 1, after which the exception no longer applies),
+fails the commit, and a full node wins next. The cost is at most one extra election
+round at cluster formation. The condition depends only on local values and on the
+presence of a full voter, so it stays monotone.
 
 Properties:
 
@@ -242,8 +257,17 @@ configuration is `{F1, F2, V}` unless stated otherwise.
   *Risk:* `Cluster`/`ClusterNode` helpers are package-private, so the test classes will
   live in the same package name (`org.opensearch.cluster.coordination`) inside the
   plugin's test source set. This is to be confirmed in step 6 and reported if it fails.
-  *Risk:* the default stabilisation time may need an extra election round for I5
-  scenarios, so the tests will add an explicit allowance and document it.
+  *Confirmed:* placing the tests in that package works (the server jar is not sealed).
+  *Confirmed:* the stabilisation time gets an explicit allowance of two extra election
+  rounds (`VOTING_ONLY_EXTRA_TIME`) for I5 scenarios.
+  *Framework limitation found:* `ClusterNode#restartedNode()` always gives the restarted
+  node `DiscoveryNodeRole.BUILT_IN_ROLES`, so a rebooted voting-only node silently
+  becomes a full node. The tests therefore call `runRandomly(allowReboots=false, …)` and
+  perform reboots with their own role-preserving `restart(...)` helper. A one-line
+  upstream fix (use `localNode.getRoles()`) would remove the workaround; it is mentioned
+  in `UPSTREAM_ISSUE.md`.
+  *Memory:* the framework's linearizability checker holds the whole history, so the
+  tests run a single `runRandomly` round per test to stay within the default test heap.
 - **Integration tests**: `OpenSearchIntegTestCase` with `InternalTestCluster`, scope TEST,
   plus a Docker Compose 2+1 rolling-restart script for the manual scenario.
 

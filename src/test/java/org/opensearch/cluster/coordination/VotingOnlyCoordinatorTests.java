@@ -47,7 +47,7 @@ import static org.hamcrest.Matchers.not;
  * {@code org.opensearch.cluster.coordination} package because the test framework's cluster helpers are package-private.
  * <p>
  * Every node gets a transport interceptor that records commit requests received from voting-only nodes, so I1 is checked on the
- * receiving side for every test, including random disruptions; see {@link #assertNoCommitFromVotingOnlyNode()}.
+ * receiving side for every test, including random disruptions; see {@link #assertVotingOnlyNodesNeverCommitted()}.
  */
 public class VotingOnlyCoordinatorTests extends AbstractCoordinatorTestCase {
 
@@ -68,7 +68,7 @@ public class VotingOnlyCoordinatorTests extends AbstractCoordinatorTestCase {
     }
 
     @After
-    public void assertNoCommitFromVotingOnlyNode() {
+    public void assertVotingOnlyNodesNeverCommitted() {
         assertThat("I1: no node may ever receive a commit from a voting-only node", commitsFromVotingOnlyNodes, empty());
     }
 
