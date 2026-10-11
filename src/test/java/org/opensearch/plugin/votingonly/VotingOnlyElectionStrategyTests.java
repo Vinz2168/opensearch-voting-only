@@ -123,6 +123,17 @@ public class VotingOnlyElectionStrategyTests extends OpenSearchTestCase {
         assertFalse(isQuorum(votingOnly1, configuration, votes));
     }
 
+    public void testVotingOnlyCandidateMayPropagateBootstrapConfiguration() {
+        // a voting-only node bootstrapped alone holds the configuration at term 0, version 0, like the un-bootstrapped full nodes
+        final VotingConfiguration configuration = config(votingOnly1);
+        final VoteCollection votes = votes(join(votingOnly1, votingOnly1, 0, 0), join(full1, votingOnly1, 0, 0));
+        assertTrue(strategy.isElectionQuorum(votingOnly1, 1, 0, 0, configuration, configuration, votes));
+        // but it still needs a full node among its voters
+        assertFalse(
+            strategy.isElectionQuorum(votingOnly1, 1, 0, 0, configuration, configuration, votes(join(votingOnly1, votingOnly1, 0, 0)))
+        );
+    }
+
     public void testVotesWithoutJoinDetails() {
         // Coordinator#onFoundPeersUpdated only adds votes, without joins
         final VotingConfiguration configuration = config(full1, full2, votingOnly1);
