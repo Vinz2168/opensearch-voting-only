@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The OpenSearch Contributors require contributions made to
+# this file be licensed under the Apache-2.0 license or a
+# compatible open source license.
+#
+# 2 + 1 topology: two full cluster-manager nodes and one voting-only tiebreaker.
+# Security is disabled: this setup is for testing only.
+
+x-common: &common
+  image: opensearch-voting-only:test
+  build:
+    context: .
+  ulimits:
+    memlock: { soft: -1, hard: -1 }
+    nofile: { soft: 65536, hard: 65536 }
+  networks: [ voting-only ]
+
+x-env: &env
+  cluster.name: voting-only-demo
+  discovery.seed_hosts: os-full-1,os-full-2,os-tiebreaker
+  cluster.initial_cluster_manager_nodes: os-full-1,os-full-2,os-tiebreaker
+  cluster.election.strategy: voting_only
+  bootstrap.memory_lock: "true"
+  DISABLE_SECURITY_PLUGIN: "true"
+  DISABLE_INSTALL_DEMO_CONFIG: "true"
+  OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+
+services:
+  os-full-1:
+    <<: *common
+    container_name: os-full-1
+    environment:
+      <<: *env
+      node.name: os-full-1
+      node.roles: cluster_manager,data,ingest
+    volumes: [ "full-1-data:/usr/share/opensearch/data" ]
+    ports: [ "9201:9200" ]
+
+  os-full-2:
+    <<: *common
+    container_name: os-full-2
+    environment:
+      <<: *env
+      node.name: os-full-2
+      node.roles: cluster_manager,data,ingest
+    volumes: [ "full-2-data:/usr/share/opensearch/data" ]
+    ports: [ "9202:9200" ]
+
+  os-tiebreaker:
+    <<: *common
+    container_name: os-tiebreaker
+    environment:
+      <<: *env
+      node.name: os-tiebreaker
+      node.roles: cluster_manager,voting_only
+      OPENSEARCH_JAVA_OPTS: -Xms256m -Xmx256m
+    volumes: [ "tiebreaker-data:/usr/share/opensearch/data" ]
+    ports: [ "9203:9200" ]
+
+volumes:
+  full-1-data:
+  full-2-data:
+  tiebreaker-data:
+
+networks:
+  voting-only:
