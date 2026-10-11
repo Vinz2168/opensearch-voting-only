@@ -1,0 +1,70 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The OpenSearch Contributors require contributions made to
+ * this file be licensed under the Apache-2.0 license or a
+ * compatible open source license.
+ */
+
+buildscript {
+    ext {
+        opensearch_version = System.getProperty("opensearch.version", "3.9.0")
+    }
+
+    repositories {
+        mavenLocal()
+        mavenCentral()
+        maven { url = "https://plugins.gradle.org/m2/" }
+        maven { url = "https://ci.opensearch.org/maven2/" }
+    }
+
+    dependencies {
+        classpath "org.opensearch.gradle:build-tools:${opensearch_version}"
+    }
+}
+
+apply plugin: 'java'
+apply plugin: 'idea'
+apply plugin: 'opensearch.opensearchplugin'
+apply plugin: 'opensearch.internal-cluster-test'
+
+group = 'org.opensearch.plugin'
+version = "${opensearch_version}.0"
+
+java {
+    targetCompatibility = JavaVersion.VERSION_21
+    sourceCompatibility = JavaVersion.VERSION_21
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven { url = "https://plugins.gradle.org/m2/" }
+    maven { url = "https://ci.opensearch.org/maven2/" }
+}
+
+opensearchplugin {
+    name = 'opensearch-voting-only'
+    description = 'Adds a voting_only cluster-manager role: a node that votes in elections but never becomes the elected cluster manager'
+    classname = 'org.opensearch.plugin.votingonly.VotingOnlyNodePlugin'
+    licenseFile = rootProject.file('LICENSE.txt')
+    noticeFile = rootProject.file('NOTICE.txt')
+}
+
+configurations {
+    all {
+        resolutionStrategy {
+            force "com.google.errorprone:error_prone_annotations:${versions.error_prone_annotations}"
+        }
+    }
+}
+
+// This requires an additional jar that is not published as part of build-tools
+loggerUsageCheck.enabled = false
+
+// The plugin is not published to Maven
+validateNebulaPom.enabled = false
+
+test {
+    include '**/*Tests.class'
+}
