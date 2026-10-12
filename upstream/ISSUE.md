@@ -1,3 +1,4 @@
+<!-- Opened on 2026-10-12 as https://github.com/opensearch-project/OpenSearch/issues/23307 -->
 # [Feature Request] Voting-only cluster-manager nodes (`voting_only` role)
 
 <!-- Draft for opensearch-project/OpenSearch, "Feature request" template.

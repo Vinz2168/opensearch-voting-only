@@ -73,5 +73,5 @@ Keep the following in mind:
 **What other resources are available?**
 
 - OpenSearch PR: opensearch-project/OpenSearch#NNNN
-- Feature request: opensearch-project/OpenSearch#NNNN
+- Feature request: opensearch-project/OpenSearch#23307
 - Prototype, design document and test results: https://github.com/Vinz2168/opensearch-voting-only

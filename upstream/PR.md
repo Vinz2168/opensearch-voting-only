@@ -1,5 +1,5 @@
 <!-- Draft PR description for opensearch-project/OpenSearch, following .github/pull_request_template.md.
-     Open it only after the feature request has been discussed. Replace #NNNN with the issue number,
+     Open it only after the feature request has been discussed. The feature request is #23307.
      and plugins/voting-only with modules/voting-only if the maintainers prefer a bundled module.
      Suggested title (it becomes the release-notes line): Add voting_only cluster-manager node role -->
 
@@ -105,7 +105,7 @@ elastic/elasticsearch#80331), and general knowledge of the Zen2 coordination alg
 `DESIGN.md` in the prototype repository.
 
 ### Related Issues
-Resolves #NNNN
+Resolves #23307
 
 Related to the forum requests:
 - https://forum.opensearch.org/t/how-to-make-a-voting-only-server/16348
