@@ -1,10 +1,15 @@
 # opensearch-voting-only: design
 
 Status: implemented. The design was reviewed before implementation; changes made during
-implementation are marked as such (§4 bootstrap exception, §8 test framework notes).
+implementation are marked as such (§4 bootstrap exception, §10 test framework notes).
+**Revision 2026-10-12 (pending review):** HA rule warning (§6), logging and settings
+(§7), plugin name `voting-only`, verification against `main`, upstream drafts in
+`upstream/` (§10, §11).
 
 Target: OpenSearch 3.9.0 (latest 3.x release, tag `3.9.0`), JDK 21.
-Every extension point below was re-verified against that tag.
+Every extension point below was re-verified against that tag. The brief checked the same
+hooks on `main` at commit d016718; the build is additionally verified against `main`
+(§10).
 
 ## 0. Clean-room statement
 
@@ -26,7 +31,8 @@ All design reasoning below is derived from the OpenSearch coordination code.
 
 | Item | Value |
 |---|---|
-| Repository | `opensearch-voting-only` |
+| Repository | `Vinz2168/opensearch-voting-only` |
+| Plugin name (descriptor, zip) | `voting-only` (was `opensearch-voting-only`; renamed to match the brief) |
 | Plugin class | `org.opensearch.plugin.votingonly.VotingOnlyNodePlugin` |
 | Role name | `voting_only` (exact, so that `RepositoriesService#isDedicatedVotingOnlyNode` matches) |
 | Role abbreviation | `v` (free in 3.9.0: built-ins use `d i m r w s`) |
@@ -43,7 +49,7 @@ cluster.election.strategy: voting_only
 ```
 
 The plugin must be installed on **every cluster-manager-eligible node**, and
-`cluster.election.strategy: voting_only` must be set on all of them (see I7 and §6).
+`cluster.election.strategy: voting_only` must be set on all of them (see I7 and §8).
 Data-only / coordinating-only nodes do not need the plugin. A node that does not have
 it deserializes the role as an OpenSearch `DynamicRole` with the same name, which is
 harmless.
@@ -57,6 +63,7 @@ harmless.
 | Quorum rule | `ElectionStrategy#satisfiesAdditionalQuorumConstraints(...)` | `isElectionQuorum` = base quorum on committed **and** accepted config **and** this hook. |
 | Fail publications | `NetworkPlugin#getTransportInterceptors(NamedWriteableRegistry, ThreadContext)` | `TransportService` wraps `sendRequestInternal` with the interceptor; this path also covers requests the node sends to itself. |
 | Repository verification skip | `RepositoriesService#isDedicatedVotingOnlyNode` | Matches on role name `voting_only`, so it works without changes. |
+| HA warning | `Plugin#createComponents(...)` → `ClusterService#addListener` | Standard component hook; listener only reads the applied `ClusterState`. |
 
 `isElectionQuorum` is called from five places, and the rule must behave correctly in all of them:
 
@@ -194,7 +201,73 @@ The plugin also logs one INFO line per such term on the voting-only node. Core
 `Coordinator`/`Publication` WARN/DEBUG lines about the failed publication cannot be
 suppressed without core changes; the README documents them.
 
-## 6. How each invariant is guaranteed
+## 6. HA rule warning (added 2026-10-12, pending review)
+
+Rule: high availability needs **at least two cluster-manager-eligible nodes that are not
+voting-only** in the voting configuration. With fewer, losing one full node leaves no
+node that can become cluster manager (§9 scenario 7). The plugin warns but never blocks
+startup or reconfiguration.
+
+Component: `VotingOnlyHaChecker implements ClusterStateListener`, created in
+`Plugin#createComponents` and registered with `ClusterService#addListener`. It is
+installed on every node that has the plugin, but it only evaluates when
+`event.localNodeClusterManager()` is true. The elected cluster manager is always a full
+node (I1), and full nodes must have the plugin (§1), so exactly one node, the current
+leader, reports.
+
+Evaluation of `state.getLastCommittedConfiguration()` (the configuration that decides
+elections):
+
+```
+full = voters found in state.nodes() that are full (VotingOnlyNodeRole.isFullClusterManagerNode)
+vo   = voters found in state.nodes() that are voting-only
+unknown = voters not in state.nodes()     # node down: its roles are not known
+violated = vo > 0 and full + unknown < 2
+```
+
+- `vo > 0`: a configuration without voting-only nodes (for example a single-node
+  cluster) is outside this plugin's concern and never warns.
+- Unknown voters count as possibly full. This avoids a false warning every time a full
+  node of a 2 + 1 cluster is down (that is a lost node, not a bad configuration). The
+  cost is a missed warning while a voting-only voter is down; it is reported as soon as
+  that node rejoins. Documented as a limitation.
+- Edge-triggered, to avoid one line per cluster state update. The checker keeps the
+  last evaluated `(configuration, violated)` pair. It logs WARN when `violated` becomes
+  true, or the configuration changes while it stays true, and INFO when it becomes false
+  again. The pair is reset when the node stops being cluster manager, so a new leader
+  reports the condition once after it is elected.
+- The check is cheap (one pass over the voting configuration) and runs on the cluster
+  applier thread; it does no I/O and never throws (any exception is caught and logged at
+  DEBUG so it cannot affect state application).
+
+Message:
+
+> `voting configuration [{ids}] contains [n] cluster-manager-eligible node(s) that are not voting-only ([names]); at least two are required for high availability: if [name] fails, no cluster manager can be elected. Add full cluster-manager-eligible nodes or remove voting_only from a node.`
+
+## 7. Logging and settings
+
+**Settings.** The plugin adds **no settings of its own**. It uses:
+
+| Setting | Where | Value |
+|---|---|---|
+| `node.roles` | voting-only node | must contain `cluster_manager` (or legacy `master`) and `voting_only` |
+| `cluster.election.strategy` (core, static) | every cluster-manager-eligible node | `voting_only`; must be identical on all of them (I7). Required on voting-only nodes (startup check, §3). |
+| `cluster.auto_shrink_voting_configuration` (core) | unchanged | the voting-only node is an ordinary voter for the `Reconfigurator`; nothing to configure |
+
+**Log lines emitted by the plugin** (logger `org.opensearch.plugin.votingonly.*`):
+
+| Level | Where | When |
+|---|---|---|
+| startup error (`IllegalArgumentException`) | any node | `voting_only` without `cluster_manager`/`master` (§3); `voting_only` without `cluster.election.strategy: voting_only` |
+| INFO | voting-only node | once per term in which it won a push election (I5), with term and pushed version (§5) |
+| exception message | full nodes, in core WARN/DEBUG lines | the `VotingOnlyNodePublicationException` text explaining the failure is intended (§5) |
+| WARN / INFO | elected cluster manager | HA rule violated / satisfied again (§6) |
+
+Core lines that accompany a push election (`Coordinator`, `Publication`,
+`ClusterFormationFailureHelper`) cannot be changed without core changes; the README lists
+them with an explanation.
+
+## 8. How each invariant is guaranteed
 
 | Invariant | Mechanism | Automated tests |
 |---|---|---|
@@ -204,9 +277,10 @@ suppressed without core changes; the README documents them.
 | **I4** 2 + 1 liveness | With either full node lost, the survivor F gets the voting-only node V's vote: V's join is accepted by F whenever F is at least as fresh as V. When F is staler, I5 applies first. | `VotingOnlyCoordinatorTests.testTwoPlusOneSurvivesLossOfEitherFullNode`, `testEveryTwoAgainstOnePartition`, `testRollingRestartsOfFullNodes`; `VotingOnlyNodeIT.testLossOfEitherFullNode`, `testRollingRestartOfFullNodes`; Docker scenario A. |
 | **I5** stale state | V wins only with a strictly staler full voter (or, at bootstrap, any full voter). Its publication makes those voters accept V's state, then fails. They are then as fresh as V, V's rule turns false, and a full node wins. | `VotingOnlyCoordinatorTests.testStaleFullNodeRecoversStateFromVotingOnlyNode` (checks the new full leader has the value only V held and that V's interceptor fired); `VotingOnlyElectionStrategyTests` stale / equal / bootstrap cases; Docker scenario B (index created while the restarted node was down is present on it once it is cluster manager; tiebreaker logs the temporary election). |
 | **I6** configuration | `validateRole` at settings parse time; exact name `voting_only`. | `VotingOnlyNodeRoleTests`; `VotingOnlyRepositoriesServiceTests` (core `isDedicatedVotingOnlyNode`); `VotingOnlyNodeIT.testVotingOnlyRoleRequiresClusterManagerRole`, `testRepositoryVerificationSkipsDedicatedVotingOnlyNode`. |
+| **HA rule** (warning) | `VotingOnlyHaChecker` on the elected cluster manager (§6). | *New:* `VotingOnlyHaCheckerTests` (2+1 ok; 1 full + 2 voting-only warns; unknown voter; no voting-only voters; edge triggering and reset on loss of leadership; never throws), using `MockLogAppender`. `VotingOnlyNodeIT.testHaWarningForSingleFullNode` (1 full + 2 voting-only, warning seen on the leader, startup not blocked). |
 | **I7** opt-in | Strategy is registered but only active when `cluster.election.strategy: voting_only`. A voting-only node without it fails startup. | `VotingOnlyNodePluginTests`; `VotingOnlyNodeIT.testVotingOnlyRoleRequiresElectionStrategy`. |
 
-## 7. Failure scenarios considered
+## 9. Failure scenarios considered
 
 Notation: F1, F2 are full cluster-manager nodes, V is a voting-only node, and the voting
 configuration is `{F1, F2, V}` unless stated otherwise.
@@ -249,7 +323,7 @@ configuration is `{F1, F2, V}` unless stated otherwise.
 12. **Remote cluster state publication** (`publish_remote_state`) is covered by the
     interceptor exactly like `publish_state`.
 
-## 8. Testing approach and known risks
+## 10. Testing approach and known risks
 
 - **Coordination tests** extend `org.opensearch.cluster.coordination.AbstractCoordinatorTestCase`
   from `org.opensearch.test:framework:3.9.0`. In 3.9.0 it exposes exactly the overrides
@@ -266,13 +340,25 @@ configuration is `{F1, F2, V}` unless stated otherwise.
   becomes a full node. The tests therefore call `runRandomly(allowReboots=false, …)` and
   perform reboots with their own role-preserving `restart(...)` helper. A one-line
   upstream fix (use `localNode.getRoles()`) would remove the workaround; it is mentioned
-  in `UPSTREAM_ISSUE.md`.
+  in `upstream/ISSUE.md`.
   *Memory:* the framework's linearizability checker holds the whole history, so the
   tests run a single `runRandomly` round per test to stay within the default test heap.
 - **Integration tests**: `OpenSearchIntegTestCase` with `InternalTestCluster`, scope TEST,
   plus a Docker Compose 2+1 rolling-restart script for the manual scenario.
+- **Verification against `main`** (new). `build.gradle` already takes
+  `-Dopensearch.version`. The `main` build uses the `3.10.0-SNAPSHOT` (or whatever `main`
+  declares) build-tools and test framework, published to `mavenLocal()` from a read-only
+  checkout of `main` (`./gradlew publishToMavenLocal`), so no snapshot repository is
+  trusted implicitly. The extension points of §2 are re-checked on that checkout
+  before the build. CI gets a second, non-blocking job doing the same, since `main`
+  can break the plugin at any time. Any incompatibility is reported, not patched in core.
+- **Gate before every commit/push**: `./gradlew spotlessApply precommit check` on 3.9.0,
+  plus the `main` build.
 
-## 9. Out of scope
+## 11. Out of scope
 
 No changes to OpenSearch core or to the documentation website. Moving the feature into
-core is left for the upstream discussion (`UPSTREAM_ISSUE.md`).
+core is left for the upstream discussion. The drafts move to `upstream/`:
+`ISSUE.md` (from `UPSTREAM_ISSUE.md`), `PR.md` (OpenSearch PR template), `CHANGELOG.md`
+(*Unreleased → Added*) and `DOCS.md` (documentation-website issue). Nothing is opened
+or pushed on `opensearch-project` repositories.
