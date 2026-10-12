@@ -32,7 +32,9 @@ apply plugin: 'opensearch.java-agent'
 apply plugin: 'com.diffplug.spotless'
 
 group = 'org.opensearch.plugin'
-version = "${opensearch_version}.0"
+// 3.9.0 -> 3.9.0.0, 3.10.0-SNAPSHOT (main) -> 3.10.0.0-SNAPSHOT
+def isSnapshot = opensearch_version.endsWith("-SNAPSHOT")
+version = "${opensearch_version - '-SNAPSHOT'}.0${isSnapshot ? '-SNAPSHOT' : ''}"
 
 java {
     targetCompatibility = JavaVersion.VERSION_21
@@ -101,7 +103,7 @@ spotless {
         endWithNewline()
     }
     format 'misc', {
-        target '*.md', 'upstream/*.md', '*.gradle', '**/*.yml'
+        target '*.md', 'upstream/*.md', '*.gradle', '.github/**/*.yml', 'docker/*.yml'
         targetExclude '**/build/**'
         trimTrailingWhitespace()
         endWithNewline()

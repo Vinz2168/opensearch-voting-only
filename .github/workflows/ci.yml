@@ -36,6 +36,33 @@ jobs:
           name: test-reports
           path: build/reports/
 
+  main:
+    name: Build and test against OpenSearch main (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: opensearch-project/OpenSearch
+          ref: main
+          path: opensearch-main
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Publish OpenSearch main to the local Maven repository
+        working-directory: opensearch-main
+        run: ./gradlew publishToMavenLocal -x javadoc --console=plain
+      - name: ./gradlew check against main
+        run: |
+          version=$(sed -n 's/^opensearch *= *//p' opensearch-main/buildSrc/version.properties)
+          echo "OpenSearch main $(git -C opensearch-main rev-parse --short HEAD), version ${version}-SNAPSHOT"
+          ./gradlew check -Dopensearch.version="${version}-SNAPSHOT" --console=plain
+
   docker-2-plus-1:
     name: Docker 2 + 1 rolling restart
     runs-on: ubuntu-latest

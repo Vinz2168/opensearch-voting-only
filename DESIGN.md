@@ -352,6 +352,9 @@ configuration is `{F1, F2, V}` unless stated otherwise.
   trusted implicitly. The extension points of §2 are re-checked on that checkout
   before the build. CI gets a second, non-blocking job doing the same, since `main`
   can break the plugin at any time. Any incompatibility is reported, not patched in core.
+  *Result (2026-10-12):* every file behind the §2 hooks, `ClusterChangedEvent` and
+  `AbstractCoordinatorTestCase` is identical between `3.9.0` and `main` at d016718;
+  `./gradlew precommit check` passes against `3.10.0-SNAPSHOT` built from that commit.
 - **Gate before every commit/push**: `./gradlew spotlessApply precommit check` on 3.9.0,
   plus the `main` build.
 
