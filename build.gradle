@@ -47,7 +47,7 @@ repositories {
 }
 
 opensearchplugin {
-    name = 'opensearch-voting-only'
+    name = 'voting-only'
     description = 'Adds a voting_only cluster-manager role: a node that votes in elections but never becomes the elected cluster manager'
     classname = 'org.opensearch.plugin.votingonly.VotingOnlyNodePlugin'
     licenseFile = rootProject.file('LICENSE.txt')

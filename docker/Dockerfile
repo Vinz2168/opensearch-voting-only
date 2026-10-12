@@ -7,6 +7,6 @@
 ARG OPENSEARCH_VERSION=3.9.0
 FROM opensearchproject/opensearch:${OPENSEARCH_VERSION}
 
-COPY --chown=opensearch:opensearch plugin.zip /tmp/opensearch-voting-only.zip
-RUN /usr/share/opensearch/bin/opensearch-plugin install --batch file:///tmp/opensearch-voting-only.zip \
-    && rm /tmp/opensearch-voting-only.zip
+COPY --chown=opensearch:opensearch plugin.zip /tmp/voting-only.zip
+RUN /usr/share/opensearch/bin/opensearch-plugin install --batch file:///tmp/voting-only.zip \
+    && rm /tmp/voting-only.zip

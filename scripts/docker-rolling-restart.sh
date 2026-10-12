@@ -121,7 +121,7 @@ trap cleanup EXIT
 
 log "building the plugin"
 (cd "$ROOT" && ./gradlew --quiet bundlePlugin)
-cp "$(ls "$ROOT"/build/distributions/opensearch-voting-only-*.zip | head -1)" "$DOCKER_DIR/plugin.zip"
+cp "$(ls "$ROOT"/build/distributions/voting-only-*.zip | head -1)" "$DOCKER_DIR/plugin.zip"
 
 log "starting the 2 + 1 cluster"
 "${COMPOSE[@]}" down -v > /dev/null 2>&1 || true
