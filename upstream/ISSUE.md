@@ -1,6 +1,8 @@
 # [Feature Request] Voting-only cluster-manager nodes (`voting_only` role)
 
-Suggested labels: `enhancement`, `Cluster Manager`
+<!-- Draft for opensearch-project/OpenSearch, "Feature request" template.
+     Related component: Cluster Manager. Suggested labels: enhancement, Cluster Manager.
+     The owner opens it; it is not opened automatically. -->
 
 ## Is your feature request related to a problem? Please describe
 
@@ -13,11 +15,18 @@ which is exactly when it hurts the most.
 OpenSearch has no way to make a node *vote* without being *electable*. Users have asked for this on
 the forum:
 
-- 2023: <!-- TODO: link to the 2023 forum thread -->
-- 2024: <!-- TODO: link to the 2024 forum thread -->
+- 2023, OpenSearch 2.11: [How to make a "Voting-only" server?](https://forum.opensearch.org/t/how-to-make-a-voting-only-server/16348).
+  `node.roles: [ master, voting_only ]` is suggested, but the node is then seen with that role and
+  does not behave as a voting-only node. No resolution.
+- 2024, OpenSearch 2.13.0: [Voting only master/cluster_manager](https://forum.opensearch.org/t/voting-only-master-cluster-manager/19248).
+  The 2 + 1 case: after the physical servers are restarted, the VM meant as tiebreaker becomes
+  cluster manager. The poster points at `RepositoriesService` and concludes that `voting_only` is
+  not implemented. No resolution.
 
-In Elasticsearch this capability exists as a voting-only role, shipped as an X-Pack module under the
-Elastic License, so it was never part of the Apache-2.0 fork. We found no existing OpenSearch issue,
+Why OpenSearch lacks it: in Elasticsearch this capability exists as a voting-only role, but it ships
+as an X-Pack module under the Elastic License. It was therefore never part of the Apache-2.0
+Elasticsearch 7.10.2 code that OpenSearch was forked from. Only the name-based check in
+`RepositoriesService` came along, and it always returns false today. We found no existing OpenSearch issue,
 RFC or third-party plugin for it.
 
 ## Describe the solution you'd like
@@ -40,14 +49,18 @@ A voting-only node:
 
 ### Reference implementation (plugin, no core changes)
 
-We built and tested this as a standalone plugin that uses only existing extension points:
-<!-- TODO: link to the opensearch-voting-only repository -->
+We built and tested this as a standalone plugin, `voting-only`, that uses only existing extension
+points: https://github.com/Vinz2168/opensearch-voting-only
 
 | Need | Extension point |
 |---|---|
 | Role | `Plugin#getRoles()` |
 | Quorum rule | `DiscoveryPlugin#getElectionStrategies()` + `ElectionStrategy#satisfiesAdditionalQuorumConstraints`, selected with `cluster.election.strategy: voting_only` |
 | Never commit as leader | `NetworkPlugin#getTransportInterceptors()` on voting-only nodes: publish requests are delivered, publish responses are turned into failures, commit requests are never sent |
+| HA warning | `Plugin#createComponents()` → `ClusterStateListener`: the elected cluster manager warns when fewer than two voters are not voting-only |
+| Repository verification | existing `RepositoriesService#isDedicatedVotingOnlyNode` (matches on the role name, no change) |
+
+All of these are identical on `3.9.0` and on `main` (checked at d016718).
 
 The hard part, described publicly in elastic/elasticsearch#80331, is that a voting-only node
 sometimes **must** win an election: when it is the only node with the latest cluster state (for
@@ -65,11 +78,15 @@ in two parts:
   response into a failure is equivalent to losing it on the network, so Zen2 safety is unchanged.
 
 Design document with the invariants, failure scenarios and invariant-to-test mapping:
-<!-- TODO: link to DESIGN.md in the repository -->
+https://github.com/Vinz2168/opensearch-voting-only/blob/main/DESIGN.md
 
-### Test results (OpenSearch 3.9.0, JDK 21)
+### Test results (OpenSearch 3.9.0 and `main`, JDK 21)
 
-- `./gradlew check` passes. No OpenSearch core classes are modified.
+CI: https://github.com/Vinz2168/opensearch-voting-only/actions
+
+- `./gradlew spotlessApply precommit check` passes on 3.9.0, and `./gradlew precommit check` passes
+  against `main` (3.10.0-SNAPSHOT at d016718). 58 unit and coordination tests, 8 integration tests.
+  No OpenSearch core classes are modified.
 - Deterministic coordination tests (`AbstractCoordinatorTestCase`) cover:
   - 2 + 1 election, and loss of each node;
   - every 2-vs-1 partition, the 3-way split and one-way partitions;
@@ -79,7 +96,8 @@ Design document with the invariants, failure scenarios and invariant-to-test map
   Every node checks on the receiving side that no commit ever comes from a voting-only node. The
   suite passed 30 consecutive random-seed iterations (450 test runs).
 - `InternalTestCluster` integration tests: 2 + 1 election, fail-over of either full node, rolling
-  restarts, restart of the voting-only node, startup validation, repository verification.
+  restarts, restart of the voting-only node, startup validation, repository verification, HA
+  warning with one full node and two voting-only nodes.
 - Docker Compose 2 + 1 scenario on the official 3.9.0 image: a rolling restart of both full nodes,
   plus a "fast" rolling restart where the tiebreaker is the only holder of the latest state.
   `_cat/cluster_manager` was polled on all nodes twice a second, and the tiebreaker was never
@@ -92,7 +110,9 @@ Design document with the invariants, failure scenarios and invariant-to-test map
   on the voting-only node, plus an INFO on the full node. The plugin adds one INFO line explaining
   that this is intended. Cleaner logs would need small core changes.
 - If voting-only nodes form a majority of the voting configuration and the full nodes are lost, no
-  leader can be elected. That is inherent to the role and documented.
+  leader can be elected. That is inherent to the role: high availability needs at least two
+  cluster-manager-eligible nodes that are not voting-only. The plugin logs a warning when the
+  voting configuration violates this, but does not block startup.
 
 ## Describe alternatives you've considered
 
@@ -104,13 +124,30 @@ Design document with the invariants, failure scenarios and invariant-to-test map
   cluster-manager-eligible node needs the plugin installed. The role is a natural core concept: core
   already refers to it in `RepositoriesService`.
 
+### Open question: optional plugin or bundled module?
+
+The code needs no core changes, so it can land in either form. We would like the maintainers'
+preference before opening a PR:
+
+| | Optional plugin (`plugins/voting-only`) | Bundled module (`modules/voting-only`) |
+|---|---|---|
+| Installation | `opensearch-plugin install voting-only` on every cluster-manager-eligible node | always present, nothing to install |
+| Mixed-cluster risk | a node without the plugin fails to start with `cluster.election.strategy: voting_only` (safe, but an operational step) | none |
+| Default footprint | none unless installed | role and strategy registered on every node, inactive unless configured |
+| Opt-in | install + `node.roles` + `cluster.election.strategy` | `node.roles` + `cluster.election.strategy` |
+
+A third option is moving the rule into the default `ElectionStrategy` in `server/`, which would
+remove the need for the setting. That is a bigger change to core coordination code, so we suggest
+starting with one of the two forms above.
+
 ## Compatibility impact
 
 - **New, opt-in role and election strategy**, with no change for clusters that do not use them.
 - **No REST or transport API changes.** The role travels in `DiscoveryNode` like any other role.
   Nodes that do not know it see it as a dynamic role with the same name.
-- In core, the plugin's `ElectionStrategy` would become part of the default strategy. The
-  `cluster.election.strategy` setting would then no longer be needed for this feature.
+- As a plugin or module, the feature is enabled with `cluster.election.strategy: voting_only`,
+  which must be identical on all cluster-manager-eligible nodes. If the rule later moves into the
+  default strategy, that setting would no longer be needed.
 - The deterministic coordination test framework would benefit from one small fix:
   `AbstractCoordinatorTestCase.Cluster.ClusterNode#restartedNode()` always recreates the node with
   `DiscoveryNodeRole.BUILT_IN_ROLES`, so custom roles are lost on reboot. Using

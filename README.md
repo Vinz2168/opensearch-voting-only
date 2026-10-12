@@ -26,12 +26,20 @@ points, with no core changes. It is a clean-room implementation (see [DESIGN.md]
 | Plugin version | OpenSearch | JDK (build) |
 |---|---|---|
 | 3.9.0.0 | 3.9.0 | 21 |
+| 3.10.0.0-SNAPSHOT | `main` (verified at d016718, 2026-10-09) | 21 |
 
-Other 3.x releases should only need a rebuild with `-Dopensearch.version=<version>`. This has
-only been tested on 3.9.0. A backport to 2.19 is expected to be small, but it has not been tried:
-the interceptor delegates two experimental 3.x streaming methods of `TransportResponseHandler`
-(`handleStreamResponse`, `skipsDeserialization`), which would have to be dropped if 2.19 lacks
-them.
+Other 3.x releases should only need a rebuild with `-Dopensearch.version=<version>`. To build
+against `main`, publish a checkout of OpenSearch `main` to the local Maven repository first:
+
+```bash
+(cd /path/to/OpenSearch && ./gradlew publishToMavenLocal -x javadoc)
+./gradlew check -Dopensearch.version=3.10.0-SNAPSHOT
+```
+
+CI does the same in a non-blocking job. A backport to 2.19 is expected to be small, but it has
+not been tried: the interceptor delegates two experimental 3.x streaming methods of
+`TransportResponseHandler` (`handleStreamResponse`, `skipsDeserialization`), which would have to
+be dropped if 2.19 lacks them.
 
 ## Installation
 
@@ -239,6 +247,13 @@ On Linux, OpenSearch needs `sudo sysctl -w vm.max_map_count=262144` first.
 
 This plugin was written without opening, fetching, searching or paraphrasing Elasticsearch
 X-Pack sources or any code under the Elastic License, SSPL or AGPL. See [DESIGN.md](DESIGN.md#0-clean-room-statement).
+
+## Upstream proposal
+
+Drafts for proposing the role to `opensearch-project/OpenSearch` are in [`upstream/`](upstream/):
+the feature request ([ISSUE.md](upstream/ISSUE.md)), the PR description ([PR.md](upstream/PR.md)),
+the changelog entry ([CHANGELOG.md](upstream/CHANGELOG.md)) and a documentation-website issue
+([DOCS.md](upstream/DOCS.md)).
 
 ## Contributing
 
