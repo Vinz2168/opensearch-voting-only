@@ -20,6 +20,7 @@ buildscript {
 
     dependencies {
         classpath "org.opensearch.gradle:build-tools:${opensearch_version}"
+        classpath "com.diffplug.spotless:spotless-plugin-gradle:8.10.1"
     }
 }
 
@@ -28,6 +29,7 @@ apply plugin: 'idea'
 apply plugin: 'opensearch.opensearchplugin'
 apply plugin: 'opensearch.internal-cluster-test'
 apply plugin: 'opensearch.java-agent'
+apply plugin: 'com.diffplug.spotless'
 
 group = 'org.opensearch.plugin'
 version = "${opensearch_version}.0"
@@ -69,3 +71,41 @@ validateNebulaPom.enabled = false
 test {
     include '**/*Tests.class'
 }
+
+// Same formatting rules as OpenSearch core (gradle/formatting.gradle and buildSrc/formatterConfig.xml of 3.9.0)
+def runningSpotlessTask = gradle.startParameter.taskNames.any { it.toLowerCase(Locale.ROOT).contains('spotless') }
+spotless {
+    java {
+        target 'src/**/*.java'
+        removeUnusedImports()
+        forbidWildcardImports()
+        importOrder(
+            'de.thetaphi',
+            'com.carrotsearch',
+            'com.fasterxml',
+            'com.avast',
+            'com.sun',
+            'com.maxmind|com.github|com.networknt|groovy|nebula',
+            'org.antlr',
+            'software.amazon',
+            'com.azure|com.microsoft|com.ibm|com.google|joptsimple|org.apache|org.bouncycastle|org.codehaus|org.opensearch|org.objectweb|org.joda|org.hamcrest|org.openjdk|org.gradle|org.junit',
+            'javax',
+            'java',
+            '',
+            '\\#java|\\#org.opensearch|\\#org.hamcrest|\\#'
+        )
+        if (runningSpotlessTask) {
+            eclipse('4.40').withP2Mirrors(Map.of("https://download.eclipse.org/", "https://ci.opensearch.org/")).configFile rootProject.file('config/formatterConfig.xml')
+        }
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+    format 'misc', {
+        target '*.md', 'upstream/*.md', '*.gradle', '**/*.yml'
+        targetExclude '**/build/**'
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+}
+
+precommit.dependsOn 'spotlessJavaCheck'

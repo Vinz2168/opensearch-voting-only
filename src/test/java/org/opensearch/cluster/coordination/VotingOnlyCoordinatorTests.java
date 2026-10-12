@@ -204,7 +204,9 @@ public class VotingOnlyCoordinatorTests extends AbstractCoordinatorTestCase {
     private void restart(Cluster cluster, ClusterNode clusterNode) {
         clusterNode.close();
         cluster.clusterNodes.forEach(
-            cn -> cluster.deterministicTaskQueue.scheduleNow(cn.onNode(() -> cn.transportService.disconnectFromNode(clusterNode.getLocalNode())))
+            cn -> cluster.deterministicTaskQueue.scheduleNow(
+                cn.onNode(() -> cn.transportService.disconnectFromNode(clusterNode.getLocalNode()))
+            )
         );
         final DiscoveryNode oldLocalNode = clusterNode.getLocalNode();
         final TransportAddress address = randomBoolean() ? buildNewFakeTransportAddress() : oldLocalNode.getAddress();
@@ -221,13 +223,9 @@ public class VotingOnlyCoordinatorTests extends AbstractCoordinatorTestCase {
         );
         final int nodeIndex = Integer.parseInt(oldLocalNode.getId().substring("node".length()));
         final ClusterNode restarted = cluster.new ClusterNode(
-            nodeIndex,
-            newLocalNode,
-            node -> cluster.new MockPersistedState(
+            nodeIndex, newLocalNode, node -> cluster.new MockPersistedState(
                 newLocalNode, clusterNode.persistedStateRegistry, Function.identity(), Function.identity()
-            ),
-            clusterNode.nodeSettings,
-            () -> new StatusInfo(HEALTHY, "healthy-info")
+            ), clusterNode.nodeSettings, () -> new StatusInfo(HEALTHY, "healthy-info")
         );
         cluster.clusterNodes.replaceAll(cn -> cn == clusterNode ? restarted : cn);
     }
@@ -250,10 +248,7 @@ public class VotingOnlyCoordinatorTests extends AbstractCoordinatorTestCase {
 
             // I2: the voting-only node is a full member of the voting configuration
             final ClusterNode votingOnly = votingOnlyNodes(cluster).get(0);
-            assertThat(
-                leader.coordinator.getLastAcceptedState().getLastCommittedConfiguration().getNodeIds(),
-                hasItem(votingOnly.getId())
-            );
+            assertThat(leader.coordinator.getLastAcceptedState().getLastCommittedConfiguration().getNodeIds(), hasItem(votingOnly.getId()));
             assertThat("sanity check: commits from full nodes are observed", commitsFromFullNodes.get(), greaterThan(0L));
         }
     }

@@ -17,8 +17,8 @@ import org.opensearch.transport.TransportInterceptor;
 import java.util.Collections;
 import java.util.List;
 
-import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.instanceOf;
 
@@ -68,7 +68,9 @@ public class VotingOnlyNodePluginTests extends OpenSearchTestCase {
     }
 
     public void testHasVotingOnlyRoleIsCaseInsensitive() {
-        assertTrue(VotingOnlyNodePlugin.hasVotingOnlyRole(Settings.builder().putList("node.roles", "cluster_manager", "Voting_Only").build()));
+        assertTrue(
+            VotingOnlyNodePlugin.hasVotingOnlyRole(Settings.builder().putList("node.roles", "cluster_manager", "Voting_Only").build())
+        );
         assertFalse(VotingOnlyNodePlugin.hasVotingOnlyRole(Settings.EMPTY));
     }
 }
