@@ -40,7 +40,7 @@ ones. Data-only and coordinating-only nodes do not need it.
 
 ```bash
 ./gradlew bundlePlugin            # with JAVA_HOME pointing to a JDK 21
-bin/opensearch-plugin install file:///path/to/build/distributions/opensearch-voting-only-3.9.0.0.zip
+bin/opensearch-plugin install file:///path/to/build/distributions/voting-only-3.9.0.0.zip
 ```
 
 ## Configuration
@@ -81,13 +81,64 @@ Rules:
   snapshot repository verification. OpenSearch core already does this for any role named
   `voting_only`.
 
-### Topology advice
+### High-availability rule
 
-- Voting-only nodes count towards the quorum like any other node. If they form a **majority** of
-  the voting configuration, losing the full nodes leaves a "quorum" that can never elect a
-  leader. Keep at least as many full cluster-manager nodes as voting-only ones; 2 + 1 is the
-  intended layout.
+At least **two cluster-manager-eligible nodes that are not voting-only** must be in the voting
+configuration. With only one, losing it leaves no node that can become cluster manager, however
+many voting-only nodes are still up.
+
+The plugin checks this on the elected cluster manager and logs a warning (it never blocks
+startup):
+
+```
+[WARN ][o.o.p.v.VotingOnlyHaChecker] [os-full-1] voting configuration VotingConfiguration{...} contains [1]
+      cluster-manager-eligible node(s) that are not voting-only [os-full-1] and [2] voting-only node(s); at least [2]
+      are required for high availability: if [os-full-1] fails, no cluster manager can be elected. Add full
+      cluster-manager-eligible nodes or remove [voting_only] from a node
+```
+
+It is logged once when the condition appears (or the configuration changes while it holds),
+and once more at INFO when it is fixed. A node that is down counts as possibly full, so a 2 + 1
+cluster with one full node down does not warn.
+
+Further advice:
+
+- Voting-only nodes count towards the quorum like any other node. Keep at least as many full
+  cluster-manager nodes as voting-only ones; 2 + 1 is the intended layout.
 - A cluster made only of voting-only nodes never elects a cluster manager.
+- The recommended voting-only node is dedicated (`cluster_manager` + `voting_only`). Adding
+  `data` is allowed, but then the node also needs the resources of a data node.
+
+### Sizing
+
+A dedicated voting-only node never runs the cluster manager's work (shard allocation, cluster
+state computation, task queue), so it can be much smaller than a full cluster-manager node:
+
+- **Heap and CPU:** it still receives, deserializes and persists every cluster state update.
+  Size the heap for the cluster state (number of indices, shards and mappings), not for the
+  workload; 1 to 2 GB is usually enough for small and medium clusters. One or two vCPUs.
+- **Disk:** it stores the cluster state on disk and fsyncs every accepted update. Use local,
+  reasonably fast storage (SSD); a slow disk delays every publication, because the elected
+  cluster manager waits for a quorum of acknowledgements, and the tiebreaker is part of that
+  quorum whenever a full node is down.
+- **Network:** for the same reason, its round-trip latency to the full nodes adds to the commit
+  time of cluster state updates. A third site is fine, a high-latency link (tens of ms or more)
+  slows down index creation, mapping updates and shard allocation.
+
+### Limitations
+
+- The plugin must be installed, with the same `cluster.election.strategy`, on **every**
+  cluster-manager-eligible node. Mixed setups are not supported.
+- When the voting-only node is the only one holding the latest cluster state, it wins a
+  short-lived election just to hand that state to a full node. This costs one extra election
+  round and produces WARN lines from OpenSearch core that cannot be changed from a plugin (see
+  below).
+- A voting-only node may occasionally win such an election even though a full node could also
+  have won (several voting-only nodes, or at the very first cluster formation). It is harmless:
+  one extra round.
+- The HA warning cannot classify a voting-only voter that is down; the warning appears once it
+  rejoins.
+- Each plugin build matches exactly one OpenSearch version, like every OpenSearch plugin.
 
 ## How it works
 
@@ -124,16 +175,17 @@ above, or once at the very first cluster formation), the logs contain lines like
 ```
 
 They are expected. A few seconds later a full node is elected. The core WARN cannot be
-suppressed without changing OpenSearch itself.
+suppressed without changing OpenSearch itself. The HA warning is shown in
+[High-availability rule](#high-availability-rule).
 
 ## Testing
 
 ```bash
 export JAVA_HOME=/path/to/jdk-21
-./gradlew check
+./gradlew spotlessApply precommit check
 ```
 
-`check` runs precommit, the unit tests, the deterministic coordination tests and the
+`spotlessApply` formats the code with the OpenSearch core rules. `check` runs precommit, the unit tests, the deterministic coordination tests and the
 internal-cluster integration tests.
 
 | Suite | What it covers |
@@ -142,8 +194,9 @@ internal-cluster integration tests.
 | `VotingOnlyElectionStrategyTests` | quorum rule, monotonicity, bootstrap case (I2, I3, I5) |
 | `VotingOnlyPublicationInterceptorTests` | publish responses failed, commits never sent (I1) |
 | `VotingOnlyNodePluginTests` | opt-in strategy, startup check (I6, I7) |
+| `VotingOnlyHaCheckerTests` | HA rule warning: evaluation, edge triggering, leader only |
 | `VotingOnlyCoordinatorTests` | `AbstractCoordinatorTestCase`: 2 + 1, loss of each node, all partitions, stale state, restarts, several voting-only nodes, random topologies and disruptions (I1–I5) |
-| `VotingOnlyNodeIT` | real nodes: 2 + 1 election, fail-over, rolling restarts, startup validation, repository verification |
+| `VotingOnlyNodeIT` | real nodes: 2 + 1 election, fail-over, rolling restarts, startup validation, repository verification, HA warning |
 
 ### Docker 2 + 1 rolling-restart scenario
 

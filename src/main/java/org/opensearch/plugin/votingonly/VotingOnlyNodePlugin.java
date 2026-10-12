@@ -9,25 +9,38 @@
 package org.opensearch.plugin.votingonly;
 
 import org.opensearch.cluster.coordination.ElectionStrategy;
+import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
 import org.opensearch.cluster.node.DiscoveryNodeRole;
+import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.util.concurrent.ThreadContext;
 import org.opensearch.core.common.io.stream.NamedWriteableRegistry;
+import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.discovery.DiscoveryModule;
+import org.opensearch.env.Environment;
+import org.opensearch.env.NodeEnvironment;
 import org.opensearch.plugins.DiscoveryPlugin;
 import org.opensearch.plugins.NetworkPlugin;
 import org.opensearch.plugins.Plugin;
+import org.opensearch.repositories.RepositoriesService;
+import org.opensearch.script.ScriptService;
+import org.opensearch.threadpool.ThreadPool;
 import org.opensearch.transport.TransportInterceptor;
+import org.opensearch.transport.client.Client;
+import org.opensearch.watcher.ResourceWatcherService;
 
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * Adds the {@code voting_only} node role, the {@code voting_only} election strategy and, on voting-only nodes, the transport interceptor
- * that keeps them from committing cluster state publications.
+ * that keeps them from committing cluster state publications. On every node it also registers the {@link VotingOnlyHaChecker}, which only
+ * reports on the elected cluster manager.
  */
 public class VotingOnlyNodePlugin extends Plugin implements DiscoveryPlugin, NetworkPlugin {
 
@@ -89,5 +102,24 @@ public class VotingOnlyNodePlugin extends Plugin implements DiscoveryPlugin, Net
             return List.of(new VotingOnlyPublicationInterceptor(nodeName));
         }
         return Collections.emptyList();
+    }
+
+    @Override
+    public Collection<Object> createComponents(
+        Client client,
+        ClusterService clusterService,
+        ThreadPool threadPool,
+        ResourceWatcherService resourceWatcherService,
+        ScriptService scriptService,
+        NamedXContentRegistry xContentRegistry,
+        Environment environment,
+        NodeEnvironment nodeEnvironment,
+        NamedWriteableRegistry namedWriteableRegistry,
+        IndexNameExpressionResolver indexNameExpressionResolver,
+        Supplier<RepositoriesService> repositoriesServiceSupplier
+    ) {
+        final VotingOnlyHaChecker haChecker = new VotingOnlyHaChecker();
+        clusterService.addListener(haChecker);
+        return List.of(haChecker);
     }
 }

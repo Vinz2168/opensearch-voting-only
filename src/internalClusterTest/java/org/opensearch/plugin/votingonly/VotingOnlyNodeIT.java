@@ -8,12 +8,15 @@
 
 package org.opensearch.plugin.votingonly;
 
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
 import org.opensearch.action.admin.cluster.repositories.verify.VerifyRepositoryResponse;
 import org.opensearch.cluster.ClusterState;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.plugins.Plugin;
 import org.opensearch.test.InternalTestCluster;
+import org.opensearch.test.MockLogAppender;
 import org.opensearch.test.OpenSearchIntegTestCase;
 
 import java.nio.file.Path;
@@ -176,17 +179,40 @@ public class VotingOnlyNodeIT extends OpenSearchIntegTestCase {
                 .setVerify(true)
         );
         final VerifyRepositoryResponse response = client().admin().cluster().prepareVerifyRepository("repo").get();
-        final List<String> verifiedNodes = response.getNodes().stream().map(VerifyRepositoryResponse.NodeView::getName).collect(Collectors.toList());
+        final List<String> verifiedNodes = response.getNodes()
+            .stream()
+            .map(VerifyRepositoryResponse.NodeView::getName)
+            .collect(Collectors.toList());
         assertThat(verifiedNodes, not(hasItem(votingOnly)));
         for (String fullNode : fullNodes) {
             assertThat(verifiedNodes, hasItem(fullNode));
         }
     }
 
+    public void testHaWarningForSingleFullNode() throws Exception {
+        try (MockLogAppender appender = MockLogAppender.createForLoggers(LogManager.getLogger(VotingOnlyHaChecker.class))) {
+            appender.addExpectation(
+                new MockLogAppender.SeenEventExpectation(
+                    "HA rule warning",
+                    VotingOnlyHaChecker.class.getCanonicalName(),
+                    Level.WARN,
+                    "*contains [1] cluster-manager-eligible node(s) that are not voting-only*[2] voting-only node(s)*"
+                )
+            );
+            // the warning never blocks startup: one full node and two voting-only nodes still form a cluster
+            final List<String> names = internalCluster().startNodes(fullNodeSettings(), votingOnlyNodeSettings(), votingOnlyNodeSettings());
+            ensureStableCluster(3);
+            assertThat(internalCluster().getClusterManagerName(), equalTo(names.get(0)));
+            assertBusy(appender::assertAllExpectationsMatched);
+        }
+    }
+
     public void testVotingOnlyRoleRequiresClusterManagerRole() {
         final Exception e = expectThrows(
             Exception.class,
-            () -> internalCluster().startNode(Settings.builder().putList("node.roles", randomFrom(List.of("voting_only"), List.of("data", "voting_only"))))
+            () -> internalCluster().startNode(
+                Settings.builder().putList("node.roles", randomFrom(List.of("voting_only"), List.of("data", "voting_only")))
+            )
         );
         assertThat(rootCauseMessage(e), containsString("node role [voting_only] requires the [cluster_manager] role"));
     }
